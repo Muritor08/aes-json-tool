@@ -1993,21 +1993,22 @@ function App() {
   function handleOperationChange(
     value
   ) {
-    /*
-     * IMPORTANT:
-     * Changing Encrypt <-> Decrypt must NOT
-     * silently change the user's IV configuration.
-     *
-     * Example:
-     *   Manual IV + Ciphertext Only
-     * must remain Manual IV + Ciphertext Only
-     * when switching operations or using reverse
-     * processing.
-     */
     setOperation(value);
 
-    setError("");
-    setSuccess("");
+    /*
+     * Encryption:
+     * new random IV
+     *
+     * Decryption:
+     * extract IV from input
+     */
+    setIvHandling(
+      value === "encrypt"
+        ? "GENERATE"
+        : "EXTRACT"
+    );
+
+    clearMessages();
   }
 
   function handleModeChange(
@@ -2114,30 +2115,26 @@ function App() {
       });
 
     /*
-     * IMPORTANT:
-     * IV transport is controlled ONLY by the
-     * "IV / Ciphertext Layout" setting.
+     * Finarkein:
      *
-     * IV + Ciphertext:
-     *   output = IV || ciphertext
-     *
-     * Ciphertext Only:
-     *   output = ciphertext
-     *
-     * This is especially important for APIs that
-     * use a fixed/manual IV and expect Base64 of
-     * ciphertext only (for example Contract Note).
+     * Base64(
+     *   IV[16 bytes]
+     *   +
+     *   Ciphertext
+     * )
      */
-    let outputBytes = ciphertext;
+    let outputBytes =
+      ciphertext;
 
     if (
       mode !== "ECB" &&
-      prependIv === true
+      prependIv
     ) {
-      outputBytes = concatBytes(
-        iv,
-        ciphertext
-      );
+      outputBytes =
+        concatBytes(
+          iv,
+          ciphertext
+        );
     }
 
     return encodeBytes(
@@ -2191,7 +2188,15 @@ function App() {
 
     /*
      * Manual IV.
-     */
+     *
+     * When the configured layout is:
+     *   - Ciphertext Only: the decoded input is already ciphertext.
+     *   - IV + Ciphertext: remove the prefixed IV before decrypting.
+     *
+     * The previous implementation used the manual IV but failed to
+     * remove a prefixed IV when the layout was IV + Ciphertext. That
+     * caused decrypted output such as:
+     *   \"\u0000...{\"response\":...\"}\n     */
     else if (
       ivHandling ===
       "MANUAL"
@@ -2206,6 +2211,40 @@ function App() {
         iv,
         mode
       );
+
+      if (prependIv) {
+        if (encoded.length <= iv.length) {
+          throw new Error(
+            `Encrypted input is too short. Expected ${iv.length} IV bytes followed by ciphertext.`
+          );
+        }
+
+        const suppliedIv = encoded.slice(
+          0,
+          iv.length
+        );
+
+        /*
+         * Validate that the IV carried by the ciphertext matches
+         * the manually configured IV. This prevents silently using
+         * the wrong fixed IV.
+         */
+        for (
+          let i = 0;
+          i < iv.length;
+          i++
+        ) {
+          if (suppliedIv[i] !== iv[i]) {
+            throw new Error(
+              "The IV prefixed to the input does not match the configured Manual IV."
+            );
+          }
+        }
+
+        ciphertext = encoded.slice(
+          iv.length
+        );
+      }
     }
 
     /*
@@ -2589,13 +2628,6 @@ function App() {
         ? "decrypt"
         : "encrypt";
 
-    /*
-     * Reverse processing intentionally uses the
-     * CURRENT AES configuration unchanged.
-     * In particular, Manual IV and Ciphertext Only
-     * stay Manual IV and Ciphertext Only.
-     */
-
     try {
       /*
        * Entire scope or raw input:
@@ -2651,7 +2683,11 @@ function App() {
        * Temporarily process the output JSON
        * using the opposite operation.
        */
-      const originalScope = scope;
+      const originalParsed =
+        parsed.value;
+
+      const originalScope =
+        scope;
 
       const originalSelectedPaths =
         selectedPaths;
