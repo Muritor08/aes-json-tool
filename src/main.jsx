@@ -1993,22 +1993,21 @@ function App() {
   function handleOperationChange(
     value
   ) {
+    /*
+     * IMPORTANT:
+     * Changing Encrypt <-> Decrypt must NOT
+     * silently change the user's IV configuration.
+     *
+     * Example:
+     *   Manual IV + Ciphertext Only
+     * must remain Manual IV + Ciphertext Only
+     * when switching operations or using reverse
+     * processing.
+     */
     setOperation(value);
 
-    /*
-     * Encryption:
-     * new random IV
-     *
-     * Decryption:
-     * extract IV from input
-     */
-    setIvHandling(
-      value === "encrypt"
-        ? "GENERATE"
-        : "EXTRACT"
-    );
-
-    clearMessages();
+    setError("");
+    setSuccess("");
   }
 
   function handleModeChange(
@@ -2115,26 +2114,30 @@ function App() {
       });
 
     /*
-     * Finarkein:
+     * IMPORTANT:
+     * IV transport is controlled ONLY by the
+     * "IV / Ciphertext Layout" setting.
      *
-     * Base64(
-     *   IV[16 bytes]
-     *   +
-     *   Ciphertext
-     * )
+     * IV + Ciphertext:
+     *   output = IV || ciphertext
+     *
+     * Ciphertext Only:
+     *   output = ciphertext
+     *
+     * This is especially important for APIs that
+     * use a fixed/manual IV and expect Base64 of
+     * ciphertext only (for example Contract Note).
      */
-    let outputBytes =
-      ciphertext;
+    let outputBytes = ciphertext;
 
     if (
       mode !== "ECB" &&
-      prependIv
+      prependIv === true
     ) {
-      outputBytes =
-        concatBytes(
-          iv,
-          ciphertext
-        );
+      outputBytes = concatBytes(
+        iv,
+        ciphertext
+      );
     }
 
     return encodeBytes(
@@ -2586,6 +2589,13 @@ function App() {
         ? "decrypt"
         : "encrypt";
 
+    /*
+     * Reverse processing intentionally uses the
+     * CURRENT AES configuration unchanged.
+     * In particular, Manual IV and Ciphertext Only
+     * stay Manual IV and Ciphertext Only.
+     */
+
     try {
       /*
        * Entire scope or raw input:
@@ -2641,11 +2651,7 @@ function App() {
        * Temporarily process the output JSON
        * using the opposite operation.
        */
-      const originalParsed =
-        parsed.value;
-
-      const originalScope =
-        scope;
+      const originalScope = scope;
 
       const originalSelectedPaths =
         selectedPaths;
