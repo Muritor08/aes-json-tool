@@ -718,6 +718,27 @@ input:disabled {
   background: #c2cbd9;
 }
 
+
+/* ================================================================
+   NULL IV / CDSL NOTE
+================================================================ */
+
+.iv-null-note {
+  grid-column: 1 / -1;
+  margin-top: -2px;
+  padding: 10px 12px;
+  border: 1px solid #e6d39a;
+  border-radius: 9px;
+  background: #fff9e8;
+  color: #735b1b;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.iv-null-note strong {
+  color: #5f4810;
+}
+
 /* ================================================================
    RESPONSIVE
 ================================================================ */

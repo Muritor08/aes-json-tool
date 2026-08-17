@@ -1254,6 +1254,14 @@ function generateIV(
   );
 }
 
+function getNullIV(mode) {
+  if (mode !== "CBC") {
+    throw new Error("Null IV is supported only for AES-CBC.");
+  }
+
+  return new Uint8Array(16);
+}
+
 function validateIV(
   iv,
   mode
@@ -1993,21 +2001,8 @@ function App() {
   function handleOperationChange(
     value
   ) {
+    // Preserve all crypto settings when toggling Encrypt/Decrypt.
     setOperation(value);
-
-    /*
-     * Encryption:
-     * new random IV
-     *
-     * Decryption:
-     * extract IV from input
-     */
-    setIvHandling(
-      value === "encrypt"
-        ? "GENERATE"
-        : "EXTRACT"
-    );
-
     clearMessages();
   }
 
@@ -2045,40 +2040,25 @@ function App() {
   }
 
   function getEncryptionIV() {
-    if (
-      mode === "ECB"
-    ) {
-      return new Uint8Array(
-        0
-      );
+    if (mode === "ECB") {
+      return new Uint8Array(0);
     }
 
-    if (
-      ivHandling ===
-      "MANUAL"
-    ) {
-      const iv =
-        decodeBytes(
-          manualIV,
-          ivEncoding
-        );
+    if (ivHandling === "NULL") {
+      return getNullIV(mode);
+    }
 
-      validateIV(
-        iv,
-        mode
+    if (ivHandling === "MANUAL") {
+      const iv = decodeBytes(
+        manualIV,
+        ivEncoding
       );
 
+      validateIV(iv, mode);
       return iv;
     }
 
-    /*
-     * IMPORTANT:
-     * This gets called independently
-     * for each selected JSON value.
-     */
-    return generateIV(
-      mode
-    );
+    return generateIV(mode);
   }
 
   async function encryptValue(
@@ -2128,7 +2108,8 @@ function App() {
 
     if (
       mode !== "ECB" &&
-      prependIv
+      prependIv &&
+      ivHandling !== "NULL"
     ) {
       outputBytes =
         concatBytes(
@@ -2184,6 +2165,16 @@ function App() {
         new Uint8Array(
           0
         );
+    }
+
+    /*
+     * CDSL Null IV mode. AES-CBC still operates with a 16-byte IV;
+     * this FE represents the documented null IV as 16 zero bytes.
+     * Input/output layout is ciphertext only.
+     */
+    else if (ivHandling === "NULL") {
+      iv = getNullIV(mode);
+      ciphertext = encoded;
     }
 
     /*
@@ -3188,12 +3179,15 @@ function App() {
                 mode ===
                 "ECB"
               }
-              onChange={(e) =>
-                setIvHandling(
-                  e.target
-                    .value
-                )
-              }
+              onChange={(e) => {
+                const value = e.target.value;
+                setIvHandling(value);
+
+                if (value === "NULL") {
+                  setPrependIv(false);
+                  setIvSize(16);
+                }
+              }}
             >
               <option value="GENERATE">
                 Auto Generate
@@ -3206,6 +3200,13 @@ function App() {
               <option value="MANUAL">
                 Manual IV
               </option>
+
+              <option
+                value="NULL"
+                disabled={mode !== "CBC"}
+              >
+                Null IV (16 zero bytes)
+              </option>
             </select>
           </Field>
 
@@ -3214,14 +3215,15 @@ function App() {
               type="number"
               min="1"
               value={
-                mode ===
-                "ECB"
+                mode === "ECB"
                   ? 0
+                  : ivHandling === "NULL"
+                  ? 16
                   : ivSize
               }
               disabled={
-                mode ===
-                "ECB"
+                mode === "ECB" ||
+                ivHandling === "NULL"
               }
               onChange={(e) =>
                 setIvSize(
@@ -3237,13 +3239,15 @@ function App() {
           <Field label="IV / Ciphertext Layout">
             <select
               value={
-                prependIv
+                ivHandling === "NULL"
+                  ? "CIPHERTEXT_ONLY"
+                  : prependIv
                   ? "IV_CIPHERTEXT"
                   : "CIPHERTEXT_ONLY"
               }
               disabled={
-                mode ===
-                "ECB"
+                mode === "ECB" ||
+                ivHandling === "NULL"
               }
               onChange={(e) =>
                 setPrependIv(
@@ -3310,6 +3314,15 @@ function App() {
                 </Field>
               </>
             )}
+
+          {ivHandling === "NULL" && (
+            <div className="iv-null-note">
+              <strong>CDSL Null IV mode:</strong> the document specifies a null IV factor.
+              This browser implementation represents it as a deterministic 16-byte all-zero IV,
+              because AES-CBC requires a 16-byte IV. Output is forced to Ciphertext Only.
+              Verify this mapping against CDSL before UAT.
+            </div>
+          )}
 
           <Field label="Input Encoding">
             <select
@@ -3653,9 +3666,10 @@ function App() {
           <span>
             Layout:{" "}
             <b>
-              {mode ===
-              "ECB"
+              {mode === "ECB"
                 ? "N/A"
+                : ivHandling === "NULL"
+                ? "Ciphertext Only"
                 : prependIv
                 ? "IV + Ciphertext"
                 : "Ciphertext Only"}
