@@ -811,3 +811,30 @@ input:disabled {
     flex-wrap: wrap;
   }
 }
+/* ================================================================
+   SMART DEFAULT POLISH
+   Keeps the existing UI while making configuration controls feel
+   responsive and easier to understand.
+================================================================ */
+
+.field input,
+.field select {
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background 0.15s ease;
+}
+
+.field input:hover:not(:disabled),
+.field select:hover:not(:disabled) {
+  border-color: #aebbd0;
+}
+
+.field select:disabled,
+.field input:disabled {
+  border-color: #e0e5ed;
+}
+
+.field > small {
+  user-select: none;
+}

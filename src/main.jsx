@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import CryptoJS from "crypto-js";
 import JSON5 from "json5";
@@ -1777,8 +1777,8 @@ function App() {
     setInputEncoding,
   ] =
     useState(
-      savedState.inputEncoding ||
-        "BASE64"
+      savedState.inputEncoding ??
+        (savedState.operation === "encrypt" ? "UTF8" : "BASE64")
     );
 
   const [
@@ -1786,8 +1786,8 @@ function App() {
     setOutputEncoding,
   ] =
     useState(
-      savedState.outputEncoding ||
-        "BASE64"
+      savedState.outputEncoding ??
+        (savedState.operation === "encrypt" ? "BASE64" : "UTF8")
     );
 
   const [
@@ -1823,7 +1823,7 @@ function App() {
   ] =
     useState(
       savedState.ivEncoding ||
-        "BASE64"
+        "UTF8"
     );
 
   const [
@@ -1890,6 +1890,27 @@ function App() {
     useState("");
 
   /*
+   * Smart defaults are applied only until the user explicitly
+   * changes a dependent setting. This keeps the UI fast without
+   * ever taking control away from the user.
+   */
+  const smartTouched = useRef(
+    savedState.smartTouched || {
+      padding: false,
+      ivHandling: false,
+      ivSize: false,
+      ivEncoding: false,
+      prependIv: false,
+      inputEncoding: false,
+      outputEncoding: false,
+    }
+  );
+
+  function markSmartTouched(key) {
+    smartTouched.current[key] = true;
+  }
+
+  /*
    * Parse input as JSON5.
    *
    * This accepts normal JSON as well as your
@@ -1950,6 +1971,7 @@ function App() {
           output,
           scope,
           selectedPaths,
+          smartTouched: smartTouched.current,
         })
       );
     } catch (storageError) {
@@ -2001,8 +2023,43 @@ function App() {
   function handleOperationChange(
     value
   ) {
-    // Preserve all crypto settings when toggling Encrypt/Decrypt.
     setOperation(value);
+
+    /*
+     * Smart defaults for the most common API workflow:
+     *   Encrypt -> UTF-8 input, Base64 output, generated IV
+     *   Decrypt -> Base64 input, UTF-8 output, extracted IV
+     *
+     * These only apply when the user has not explicitly overridden
+     * the corresponding setting.
+     */
+    if (!smartTouched.current.inputEncoding) {
+      setInputEncoding(
+        value === "encrypt"
+          ? "UTF8"
+          : "BASE64"
+      );
+    }
+
+    if (!smartTouched.current.outputEncoding) {
+      setOutputEncoding(
+        value === "encrypt"
+          ? "BASE64"
+          : "UTF8"
+      );
+    }
+
+    if (
+      mode !== "ECB" &&
+      !smartTouched.current.ivHandling
+    ) {
+      setIvHandling(
+        value === "encrypt"
+          ? "GENERATE"
+          : "EXTRACT"
+      );
+    }
+
     clearMessages();
   }
 
@@ -2011,29 +2068,57 @@ function App() {
   ) {
     setMode(value);
 
-    if (
-      value === "CBC" ||
-      value === "ECB"
-    ) {
+    /* Padding follows the selected mode until the user changes it. */
+    if (!smartTouched.current.padding) {
       setPadding(
-        "PKCS7"
-      );
-    } else {
-      setPadding(
-        "NONE"
+        value === "CBC" ||
+        value === "ECB"
+          ? "PKCS7"
+          : "NONE"
       );
     }
 
-    if (
-      value === "GCM"
-    ) {
-      setIvSize(12);
+    /* IV size follows the AES mode until the user changes it. */
+    if (!smartTouched.current.ivSize) {
+      setIvSize(
+        value === "GCM"
+          ? 12
+          : value === "ECB"
+          ? 0
+          : 16
+      );
+    }
+
+    /*
+     * Null IV is only meaningful for CBC. If the user has not
+     * explicitly chosen an IV strategy, select the operation-appropriate
+     * default for the new mode.
+     */
+    if (!smartTouched.current.ivHandling) {
+      if (value === "ECB") {
+        setIvHandling(
+          "EXTRACT"
+        );
+      } else {
+        setIvHandling(
+          operation === "encrypt"
+            ? "GENERATE"
+            : "EXTRACT"
+        );
+      }
     } else if (
-      value === "ECB"
+      value !== "CBC" &&
+      ivHandling === "NULL"
     ) {
-      setIvSize(0);
-    } else {
-      setIvSize(16);
+      /* Null IV is a CBC-only setting. */
+      markSmartTouched(
+        "ivHandling"
+      );
+      setIvHandling(
+        operation === "encrypt"
+          ? "GENERATE"
+          : "EXTRACT"
+      );
     }
 
     clearMessages();
@@ -2932,6 +3017,16 @@ function App() {
     setSuccess("");
     setSelectedPaths([]);
 
+    smartTouched.current = {
+      padding: false,
+      ivHandling: false,
+      ivSize: false,
+      ivEncoding: false,
+      prependIv: false,
+      inputEncoding: false,
+      outputEncoding: false,
+    };
+
     try {
       sessionStorage.removeItem(
         STORAGE_KEY
@@ -3074,12 +3169,12 @@ function App() {
               disabled={
                 !currentMode.supportsPadding
               }
-              onChange={(e) =>
+              onChange={(e) => {
+                markSmartTouched("padding");
                 setPadding(
-                  e.target
-                    .value
-                )
-              }
+                  e.target.value
+                );
+              }}
             >
               {PADDINGS.map(
                 (item) => (
@@ -3181,12 +3276,44 @@ function App() {
               }
               onChange={(e) => {
                 const value = e.target.value;
+
+                markSmartTouched("ivHandling");
                 setIvHandling(value);
 
                 if (value === "NULL") {
                   setPrependIv(false);
                   setIvSize(16);
+                } else if (value === "MANUAL") {
+                  /* Most human-entered IVs are plain strings. */
+                  if (!smartTouched.current.ivEncoding) {
+                    setIvEncoding("UTF8");
+                  }
+                  if (!smartTouched.current.ivSize) {
+                    setIvSize(
+                      mode === "GCM" ? 12 : 16
+                    );
+                  }
+                } else if (value === "GENERATE") {
+                  if (!smartTouched.current.ivSize) {
+                    setIvSize(
+                      mode === "GCM" ? 12 : mode === "ECB" ? 0 : 16
+                    );
+                  }
+                  if (!smartTouched.current.prependIv && mode !== "ECB") {
+                    setPrependIv(true);
+                  }
+                } else if (value === "EXTRACT") {
+                  if (!smartTouched.current.ivSize) {
+                    setIvSize(
+                      mode === "GCM" ? 12 : mode === "ECB" ? 0 : 16
+                    );
+                  }
+                  if (!smartTouched.current.prependIv && mode !== "ECB") {
+                    setPrependIv(true);
+                  }
                 }
+
+                clearMessages();
               }}
             >
               <option value="GENERATE">
@@ -3225,14 +3352,12 @@ function App() {
                 mode === "ECB" ||
                 ivHandling === "NULL"
               }
-              onChange={(e) =>
+              onChange={(e) => {
+                markSmartTouched("ivSize");
                 setIvSize(
-                  Number(
-                    e.target
-                      .value
-                  )
-                )
-              }
+                  Number(e.target.value)
+                );
+              }}
             />
           </Field>
 
@@ -3249,13 +3374,12 @@ function App() {
                 mode === "ECB" ||
                 ivHandling === "NULL"
               }
-              onChange={(e) =>
+              onChange={(e) => {
+                markSmartTouched("prependIv");
                 setPrependIv(
-                  e.target
-                    .value ===
-                    "IV_CIPHERTEXT"
-                )
-              }
+                  e.target.value === "IV_CIPHERTEXT"
+                );
+              }}
             >
               <option value="IV_CIPHERTEXT">
                 IV + Ciphertext
@@ -3292,12 +3416,12 @@ function App() {
                     value={
                       ivEncoding
                     }
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      markSmartTouched("ivEncoding");
                       setIvEncoding(
-                        e.target
-                          .value
-                      )
-                    }
+                        e.target.value
+                      );
+                    }}
                   >
                     <option value="BASE64">
                       Base64
@@ -3329,12 +3453,12 @@ function App() {
               value={
                 inputEncoding
               }
-              onChange={(e) =>
+              onChange={(e) => {
+                markSmartTouched("inputEncoding");
                 setInputEncoding(
-                  e.target
-                    .value
-                )
-              }
+                  e.target.value
+                );
+              }}
             >
               <option value="BASE64">
                 Base64
@@ -3355,12 +3479,12 @@ function App() {
               value={
                 outputEncoding
               }
-              onChange={(e) =>
+              onChange={(e) => {
+                markSmartTouched("outputEncoding");
                 setOutputEncoding(
-                  e.target
-                    .value
-                )
-              }
+                  e.target.value
+                );
+              }}
             >
               <option value="BASE64">
                 Base64
