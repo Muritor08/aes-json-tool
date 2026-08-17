@@ -18,6 +18,34 @@
       content="Universal AES encryption and decryption tool"
     />
 
+    <!-- Content Security Policy -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="
+        default-src 'self';
+        script-src 'self';
+        style-src 'self';
+        img-src 'self' data:;
+        font-src 'self' data:;
+        connect-src 'self';
+        object-src 'none';
+        base-uri 'self';
+        form-action 'self';
+        upgrade-insecure-requests;
+      "
+    />
+
+    <!-- Referrer Policy -->
+    <meta
+      name="referrer"
+      content="no-referrer"
+    />
+
+    <link
+      rel="stylesheet"
+      href="./src/styles.css"
+    />
+
     <title>Universal AES Encryption Tool</title>
 
     <link
@@ -44,7 +72,7 @@
 
     <script
       type="module"
-      src="/src/main.jsx"
+      src="./src/main.jsx"
     ></script>
   </body>
 </html>
